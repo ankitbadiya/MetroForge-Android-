@@ -1,0 +1,11 @@
+{
+  "appId": "com.metroforge.citybuilder",
+  "appName": "MetroForge 3D",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

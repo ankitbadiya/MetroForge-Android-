@@ -1,0 +1,10 @@
+{
+  "name": "MetroForge 3D City Builder",
+  "short_name": "MetroForge",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050811",
+  "theme_color": "#050811",
+  "description": "3D open-world city building simulator"
+}
