@@ -1,9 +1,11 @@
+
 name: MetroForge Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -13,29 +15,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      # 3. Setup Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
+      # 4. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools'
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
 
-      - name: Install Android SDK Packages
-        run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
-
+      # 5. Prepare Web Files
       - name: Prepare Web Files
         run: |
           mkdir -p www
@@ -43,49 +46,113 @@ jobs:
           cp manifest.webmanifest www/manifest.webmanifest
           cp sw.js www/sw.js
 
+      # 6. Install Dependencies
       - name: Install Dependencies
         run: npm install
 
+      # 7. Generate Android Project
       - name: Generate Android Project
         run: npx cap add android
 
+      # 8. Add Native Activity
       - name: Add Native Activity
         run: |
           mkdir -p android/app/src/main/java/com/metroforge/citybuilder
           cp MainActivity.java android/app/src/main/java/com/metroforge/citybuilder/MainActivity.java
 
-      - name: Configure Android Manifest
+      # 9. Sync Capacitor
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # 10. Repair and Configure Manifests
+      - name: Repair Android Manifests
         run: |
           python3 - <<'PY'
+          import re
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          p = Path("android/app/src/main/AndroidManifest.xml")
-          tree = ET.parse(p)
+          ANDROID_NS = "http://schemas.android.com/apk/res/android"
+          ET.register_namespace("android", ANDROID_NS)
+
+          manifests = list(Path("android").rglob("AndroidManifest.xml"))
+
+          if not manifests:
+              raise RuntimeError("No AndroidManifest.xml files found")
+
+          # Repair missing Android namespace
+          for path in manifests:
+              content = path.read_text(encoding="utf-8")
+
+              match = re.search(r"<manifest\b[^>]*>", content, re.S)
+
+              if not match:
+                  raise RuntimeError(f"Invalid manifest: {path}")
+
+              root_tag = match.group(0)
+
+              if "android:" in content and not re.search(
+                  r'\bxmlns:android\s*=', root_tag
+              ):
+                  fixed_tag = root_tag[:-1] + (
+                      f' xmlns:android="{ANDROID_NS}">'
+                  )
+                  content = content.replace(root_tag, fixed_tag, 1)
+                  path.write_text(content, encoding="utf-8")
+                  print(f"Namespace repaired: {path}")
+
+              # Validate XML
+              try:
+                  ET.parse(path)
+                  print(f"VALID: {path}")
+              except ET.ParseError as error:
+                  raise RuntimeError(f"XML error in {path}: {error}")
+
+          # Configure main application manifest
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          tree = ET.parse(manifest)
           root = tree.getroot()
 
-          ns = "{http://schemas.android.com/apk/res/android}"
+          ns = f"{{{ANDROID_NS}}}"
           app = root.find("application")
+
+          if app is None:
+              raise RuntimeError("Application element missing")
 
           app.set(ns + "label", "MetroForge 3D")
           app.set(ns + "usesCleartextTraffic", "true")
 
-          for activity in app.findall("activity"):
-              if activity.get(ns + "name", "").endswith("MainActivity"):
-                  activity.set(ns + "screenOrientation", "sensorLandscape")
+          activities = app.findall("activity")
 
-          tree.write(p, encoding="utf-8", xml_declaration=True)
+          for activity in activities:
+              if activity.get(ns + "name", "").endswith("MainActivity"):
+                  # Support both portrait and landscape
+                  activity.set(ns + "screenOrientation", "fullSensor")
+
+          tree.write(
+              manifest,
+              encoding="utf-8",
+              xml_declaration=True
+          )
+
+          # Final validation
+          ET.parse(manifest)
+
+          print("Manifest configured successfully")
+          print("Portrait + Landscape enabled")
           PY
 
-      - name: Sync Capacitor
-        run: npx cap sync android
-
+      # 11. Build Debug APK
       - name: Build APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
+      # 12. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
